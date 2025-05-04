@@ -1,11 +1,1379 @@
 <!DOCTYPE html>
-<html>
-  <head>
-    <meta charset="UTF-8" />
-    <meta http-equiv="refresh" content="0;url=https://www.bilibili.com/" />
-    <title>Redirecting...</title>
-  </head>
-  <body>
-    <p>If you are not redirected, <a href="https://www.bilibili.com/">click here</a>.</p>
-  </body>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>俄罗斯方块</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&display=swap');
+        
+        body {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            background: linear-gradient(135deg, #1a1a1a 0%, #2a2a2a 100%);
+            font-family: 'Orbitron', sans-serif;
+            color: #fff;
+            overflow: hidden;
+        }
+        
+        .game-container {
+            display: flex;
+            gap: 20px;
+            position: relative;
+            perspective: 1000px;
+        }
+        
+        .info-panel {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 25px;
+            border-radius: 15px;
+            border: 1px solid rgba(0, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            box-shadow: 0 0 20px rgba(0, 255, 255, 0.1);
+        }
+        
+        .score {
+            font-size: 28px;
+            text-shadow: 0 0 10px rgba(0, 255, 255, 0.5);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .score-value {
+            font-size: 36px;
+            color: #0ff;
+            text-shadow: 0 0 15px rgba(0, 255, 255, 0.7);
+        }
+        
+        .controls {
+            font-size: 16px;
+            background: rgba(255, 255, 255, 0.05);
+            padding: 20px;
+            border-radius: 10px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        .controls h3 {
+            color: #0ff;
+            margin: 0 0 15px 0;
+            text-align: center;
+        }
+        
+        .control-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin: 10px 0;
+        }
+        
+        .key-icon {
+            background: rgba(0, 255, 255, 0.1);
+            border: 1px solid rgba(0, 255, 255, 0.3);
+            padding: 5px 10px;
+            border-radius: 5px;
+            min-width: 30px;
+            text-align: center;
+            font-size: 14px;
+            box-shadow: 0 0 10px rgba(0, 255, 255, 0.2);
+        }
+        
+        @keyframes scoreChange {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.2); }
+            100% { transform: scale(1); }
+        }
+        
+        .score-change {
+            animation: scoreChange 0.3s ease-out;
+        }
+        
+        canvas {
+            border: 2px solid #444;
+            background-color: rgba(0, 0, 0, 0.8);
+            box-shadow: 0 0 20px rgba(0, 0, 0, 0.5);
+            border-radius: 5px;
+            transform: perspective(1000px) rotateX(10deg);
+            transform-style: preserve-3d;
+        }
+        #particleCanvas {
+            position: fixed;
+            top: 0;
+            left: 0;
+            pointer-events: none;
+            z-index: -1;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="particleCanvas"></canvas>
+    <div class="game-container">
+        <canvas id="gameCanvas" width="300" height="600"></canvas>
+        <div class="info-panel">
+            <div class="score">
+                分数
+                <div id="score" class="score-value">0</div>
+            </div>
+            <div class="controls">
+                <h3>操作说明</h3>
+                <div class="control-item">
+                    <div class="key-icon">←</div>
+                    <div class="key-icon">→</div>
+                    <span>左右移动</span>
+                </div>
+                <div class="control-item">
+                    <div class="key-icon">↑</div>
+                    <span>旋转</span>
+                </div>
+                <div class="control-item">
+                    <div class="key-icon">↓</div>
+                    <span>加速下落</span>
+                </div>
+                <div class="control-item">
+                    <div class="key-icon">空格</div>
+                    <span>直接落下</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreElement = document.getElementById('score');
+
+        // 设置粒子画布
+        const particleCanvas = document.getElementById('particleCanvas');
+        const particleCtx = particleCanvas.getContext('2d');
+        particleCanvas.width = window.innerWidth;
+        particleCanvas.height = window.innerHeight;
+
+        // 获取游戏画布的实际位置
+        const gameRect = canvas.getBoundingClientRect();
+        
+        const BLOCK_SIZE = 30;
+        const COLS = 10;
+        const ROWS = 20;
+        
+        let score = 0;
+        let board = Array(ROWS).fill().map(() => Array(COLS).fill(0));
+        let currentPiece = null;
+        let ghostPiece = null;
+        let animationId = null;
+        let lastDropTime = 0;
+        let dropInterval = 1000; // 1秒下落一次
+        let isPaused = false;
+
+        const SHAPES = [
+            [[1, 1, 1, 1]], // I
+            [[1, 1], [1, 1]], // O
+            [[1, 1, 1], [0, 1, 0]], // T
+            [[1, 1, 1], [1, 0, 0]], // L
+            [[1, 1, 1], [0, 0, 1]], // J
+            [[1, 1, 0], [0, 1, 1]], // S
+            [[0, 1, 1], [1, 1, 0]]  // Z
+        ];
+
+        const COLORS = [
+            '#00f0f0', // cyan
+            '#f0f000', // yellow
+            '#a000f0', // purple
+            '#f0a000', // orange
+            '#0000f0', // blue
+            '#00f000', // green
+            '#f00000'  // red
+        ];
+
+        class Piece {
+            constructor(shape = null, color = null) {
+                const randomIndex = Math.floor(Math.random() * SHAPES.length);
+                this.shape = shape || SHAPES[randomIndex];
+                this.color = color || COLORS[randomIndex];
+                this.x = Math.floor((COLS - this.shape[0].length) / 2);
+                this.y = 0;
+                this.rotationAngle = 0;
+                this.isRotating = false;
+                this.trailParticles = [];
+                this.lastPositions = [];
+                this.previousPositions = [];  // 用于存储前几帧的位置
+                this.trailOpacity = 1;  // 拖影透明度
+                
+                // 检查初始位置是否已有方块
+                if (this.collision(0, 0)) {
+                    gameOver();
+                }
+            }
+
+            async rotate() {
+                if (this.isRotating) return;
+                
+                const newShape = Array(this.shape[0].length).fill()
+                    .map(() => Array(this.shape.length).fill(0));
+                
+                for (let y = 0; y < this.shape.length; y++) {
+                    for (let x = 0; x < this.shape[y].length; x++) {
+                        newShape[x][this.shape.length - 1 - y] = this.shape[y][x];
+                    }
+                }
+
+                if (!this.collision(0, 0, newShape)) {
+                    this.isRotating = true;
+                    const centerX = (this.x + this.shape[0].length / 2) * BLOCK_SIZE;
+                    const centerY = (this.y + this.shape.length / 2) * BLOCK_SIZE;
+                    
+                    // 旋转动画
+                    const steps = 8;
+                    for (let i = 0; i <= steps; i++) {
+                        this.rotationAngle = (i / steps) * Math.PI / 2;
+                        
+                        // 创建旋转特效
+                        for (let y = 0; y < this.shape.length; y++) {
+                            for (let x = 0; x < this.shape[y].length; x++) {
+                                if (this.shape[y][x]) {
+                                    const angle = this.rotationAngle + Math.PI * 2 * (i / steps);
+                                    const radius = BLOCK_SIZE;
+                                    const px = centerX + Math.cos(angle) * radius;
+                                    const py = centerY + Math.sin(angle) * radius;
+                                    particles.push(new Particle(px, py, this.color, 'rotateTrail'));
+                                }
+                            }
+                        }
+                        
+                        draw();
+                        await new Promise(resolve => setTimeout(resolve, 15));
+                    }
+                    
+                    this.shape = newShape;
+                    this.rotationAngle = 0;
+                    this.isRotating = false;
+                    draw(); // 立即更新显示
+                }
+            }
+
+            collision(moveX, moveY, shape = this.shape) {
+                for (let y = 0; y < shape.length; y++) {
+                    for (let x = 0; x < shape[y].length; x++) {
+                        if (shape[y][x]) {
+                            const newX = this.x + x + moveX;
+                            const newY = this.y + y + moveY;
+                            
+                            if (newX < 0 || newX >= COLS || newY >= ROWS) return true;
+                            if (newY >= 0 && board[newY][newX]) return true;
+                        }
+                    }
+                }
+                return false;
+            }
+
+            move(dx, dy) {
+                if (!this.collision(dx, dy)) {
+                    // 记录移动前的位置
+                    this.previousPositions.unshift({
+                        x: this.x,
+                        y: this.y,
+                        opacity: 1
+                    });
+                    
+                    // 只保留最近5帧的位置
+                    if (this.previousPositions.length > 5) {
+                        this.previousPositions.pop();
+                    }
+                    
+                    this.x += dx;
+                    this.y += dy;
+                    
+                    // 更新所有历史位置的透明度
+                    this.previousPositions.forEach((pos, index) => {
+                        pos.opacity = 1 - (index + 1) * 0.2;
+                    });
+                    
+                    return true;
+                }
+                return false;
+            }
+
+            getGhostPosition() {
+                let ghostY = this.y;
+                while (!this.collision(0, ghostY - this.y + 1)) {
+                    ghostY++;
+                }
+                return ghostY;
+            }
+        }
+
+        function drawBlock(x, y, color, isGhost = false, rotation = 0, opacity = 1) {
+            const blockX = x * BLOCK_SIZE + BLOCK_SIZE / 2;
+            const blockY = y * BLOCK_SIZE + BLOCK_SIZE / 2;
+
+            ctx.save();
+            ctx.translate(blockX, blockY);
+            if (rotation !== 0) {
+                ctx.rotate(rotation);
+            }
+            ctx.translate(-BLOCK_SIZE / 2, -BLOCK_SIZE / 2);
+            ctx.globalAlpha = opacity;
+
+            if (!isGhost) {
+                // 增强玻璃质感效果
+                const glassGradient = ctx.createLinearGradient(0, 0, BLOCK_SIZE, BLOCK_SIZE);
+                glassGradient.addColorStop(0, `${lightenColor(color, 40)}dd`);
+                glassGradient.addColorStop(0.3, `${lightenColor(color, 20)}ee`);
+                glassGradient.addColorStop(0.7, `${color}ee`);
+                glassGradient.addColorStop(1, `${darkenColor(color, 20)}dd`);
+                
+                ctx.fillStyle = glassGradient;
+                ctx.fillRect(0, 0, BLOCK_SIZE - 1, BLOCK_SIZE - 1);
+                
+                // 增强发光边缘
+                ctx.strokeStyle = lightenColor(color, 60);
+                ctx.lineWidth = 2;
+                ctx.shadowColor = color;
+                ctx.shadowBlur = 8;
+                ctx.strokeRect(0, 0, BLOCK_SIZE - 1, BLOCK_SIZE - 1);
+            } else {
+                // 增强幽灵方块效果
+                ctx.fillStyle = `${color}22`;
+                ctx.strokeStyle = `${color}66`;
+                ctx.setLineDash([4, 4]);
+                ctx.fillRect(0, 0, BLOCK_SIZE - 1, BLOCK_SIZE - 1);
+                ctx.strokeRect(0, 0, BLOCK_SIZE - 1, BLOCK_SIZE - 1);
+                
+                // 添加幽灵光晕
+                const ghostGlow = ctx.createRadialGradient(
+                    BLOCK_SIZE/2, BLOCK_SIZE/2, 0,
+                    BLOCK_SIZE/2, BLOCK_SIZE/2, BLOCK_SIZE
+                );
+                ghostGlow.addColorStop(0, `${color}22`);
+                ghostGlow.addColorStop(1, 'rgba(255, 255, 255, 0)');
+                ctx.fillStyle = ghostGlow;
+                ctx.fillRect(-BLOCK_SIZE/2, -BLOCK_SIZE/2, BLOCK_SIZE*2, BLOCK_SIZE*2);
+            }
+
+            ctx.restore();
+        }
+
+        // 颜色处理工具函数
+        function lightenColor(color, percent) {
+            const num = parseInt(color.replace('#', ''), 16);
+            const amt = Math.round(2.55 * percent);
+            const R = (num >> 16) + amt;
+            const G = (num >> 8 & 0x00FF) + amt;
+            const B = (num & 0x0000FF) + amt;
+            return '#' + (
+                0x1000000 +
+                (R < 255 ? R < 1 ? 0 : R : 255) * 0x10000 +
+                (G < 255 ? G < 1 ? 0 : G : 255) * 0x100 +
+                (B < 255 ? B < 1 ? 0 : B : 255)
+            ).toString(16).slice(1);
+        }
+
+        function darkenColor(color, percent) {
+            const num = parseInt(color.replace('#', ''), 16);
+            const amt = Math.round(2.55 * percent);
+            const R = (num >> 16) - amt;
+            const G = (num >> 8 & 0x00FF) - amt;
+            const B = (num & 0x0000FF) - amt;
+            return '#' + (
+                0x1000000 +
+                (R > 0 ? R : 0) * 0x10000 +
+                (G > 0 ? G : 0) * 0x100 +
+                (B > 0 ? B : 0)
+            ).toString(16).slice(1);
+        }
+
+        // 修改绘制函数
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            drawGrid();
+            
+            // 绘制已固定的方块
+            for (let y = 0; y < ROWS; y++) {
+                for (let x = 0; x < COLS; x++) {
+                    if (board[y][x]) {
+                        drawBlock(x, y, board[y][x]);
+                    }
+                }
+            }
+
+            // 绘制幽灵方块
+            if (currentPiece) {
+                const ghostY = currentPiece.getGhostPosition();
+                for (let y = 0; y < currentPiece.shape.length; y++) {
+                    for (let x = 0; x < currentPiece.shape[y].length; x++) {
+                        if (currentPiece.shape[y][x]) {
+                            drawBlock(currentPiece.x + x, ghostY + y, currentPiece.color, true);
+                        }
+                    }
+                }
+            }
+
+            // 绘制当前方块的拖影
+            if (currentPiece) {
+                // 先绘制历史位置（拖影）
+                currentPiece.previousPositions.forEach(pos => {
+                    for (let y = 0; y < currentPiece.shape.length; y++) {
+                        for (let x = 0; x < currentPiece.shape[y].length; x++) {
+                            if (currentPiece.shape[y][x]) {
+                                drawBlock(
+                                    pos.x + x,
+                                    pos.y + y,
+                                    currentPiece.color,
+                                    false,
+                                    0,
+                                    pos.opacity * 0.3  // 降低拖影透明度
+                                );
+                            }
+                        }
+                    }
+                });
+
+                // 绘制当前方块
+                for (let y = 0; y < currentPiece.shape.length; y++) {
+                    for (let x = 0; x < currentPiece.shape[y].length; x++) {
+                        if (currentPiece.shape[y][x]) {
+                            drawBlock(
+                                currentPiece.x + x,
+                                currentPiece.y + y,
+                                currentPiece.color,
+                                false,
+                                currentPiece.isRotating ? currentPiece.rotationAngle : 0,
+                                1
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        // 添加震动效果
+        let shakeIntensity = 0;
+        let shakeDecay = 0.9;
+        let shakeOffsetX = 0;
+        let shakeOffsetY = 0;
+
+        function applyShake() {
+            if (shakeIntensity > 0) {
+                const angle = Math.random() * Math.PI * 2;
+                shakeOffsetX = Math.cos(angle) * shakeIntensity;
+                shakeOffsetY = Math.sin(angle) * shakeIntensity;
+                shakeIntensity *= 0.85;
+                if (shakeIntensity < 0.5) shakeIntensity = 0;
+            }
+        }
+
+        // 添加视觉畸变效果
+        function createDistortionEffect() {
+            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            const data = imageData.data;
+            const length = data.length;
+            const time = Date.now() * 0.001;
+
+            for (let i = 0; i < length; i += 4) {
+                const x = (i / 4) % canvas.width;
+                const y = Math.floor((i / 4) / canvas.width);
+                const distortion = Math.sin(x * 0.1 + time) * 2;
+                
+                const sourceIndex = (Math.floor(y + distortion) * canvas.width + x) * 4;
+                if (sourceIndex >= 0 && sourceIndex < length - 4) {
+                    data[i] = data[sourceIndex];
+                    data[i + 1] = data[sourceIndex + 1];
+                    data[i + 2] = data[sourceIndex + 2];
+                }
+            }
+            ctx.putImageData(imageData, 0, 0);
+        }
+
+        // 创建电子网格效果
+        function createCyberGrid() {
+            ctx.save();
+            ctx.strokeStyle = 'rgba(0, 255, 255, 0.3)';
+            ctx.lineWidth = 1;
+            ctx.shadowColor = '#0ff';
+            ctx.shadowBlur = 10;
+            
+            const gridSize = 20;
+            const time = Date.now() * 0.001;
+            
+            for (let x = 0; x < canvas.width; x += gridSize) {
+                const offset = Math.sin(x * 0.05 + time) * 5;
+                ctx.beginPath();
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x + offset, canvas.height);
+                ctx.stroke();
+            }
+            
+            for (let y = 0; y < canvas.height; y += gridSize) {
+                const offset = Math.cos(y * 0.05 + time) * 5;
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                ctx.lineTo(canvas.width + offset, y);
+                ctx.stroke();
+            }
+            
+            ctx.restore();
+        }
+
+        // 升级特效创建函数
+        function createExplosionEffect(x, y, color) {
+            // 爆炸粒子
+            for (let i = 0; i < 20; i++) {
+                particles.push(new Particle(x, y, color, 'explosion'));
+            }
+            
+            // 像素碎片
+            for (let i = 0; i < 8; i++) {
+                particles.push(new Particle(x, y, color, 'pixel'));
+            }
+            
+            // 火花效果
+            for (let i = 0; i < 12; i++) {
+                particles.push(new Particle(x, y, '#ffffff', 'spark'));
+            }
+            
+            // 冲击波
+            particles.push(new Particle(x, y, color, 'shockwave'));
+            
+            // 上升光束
+            for (let i = 0; i < 5; i++) {
+                particles.push(new Particle(x, y, color, 'trail'));
+            }
+            
+            shakeIntensity = 15;
+        }
+
+        // 修改消行动画
+        async function animateLine(y) {
+            const originalLine = [...board[y]];
+            
+            // 创建强烈的闪光效果
+            ctx.save();
+            ctx.fillStyle = '#fff';
+            ctx.globalAlpha = 1;
+            ctx.fillRect(0, y * BLOCK_SIZE, canvas.width, BLOCK_SIZE);
+            ctx.restore();
+            
+            // 创建能量波动效果
+            const centerX = canvas.width / 2;
+            const centerY = y * BLOCK_SIZE + BLOCK_SIZE / 2;
+            
+            // 创建扩散波
+            for (let i = 0; i < 3; i++) {
+                particles.push(new Particle(centerX, centerY, '#ffffff', 'shockwave'));
+            }
+            
+            // 创建电弧效果
+            for (let x = 0; x < COLS; x++) {
+                if (originalLine[x]) {
+                    const worldX = x * BLOCK_SIZE + BLOCK_SIZE / 2;
+                    const worldY = y * BLOCK_SIZE + BLOCK_SIZE / 2;
+                    
+                    // 创建能量爆发
+                    for (let i = 0; i < 8; i++) {
+                        const angle = (Math.PI * 2 * i) / 8;
+                        particles.push(new Particle(
+                            worldX + Math.cos(angle) * BLOCK_SIZE,
+                            worldY + Math.sin(angle) * BLOCK_SIZE,
+                            '#ffffff',
+                            'energyBeam'
+                        ));
+                    }
+                }
+            }
+            
+            // 等待特效完成
+            await new Promise(resolve => setTimeout(resolve, 50));
+        }
+
+        // 优化消行检查函数
+        async function checkLines() {
+            let linesCleared = 0;
+            let linesToAnimate = [];
+
+            // 从下往上检查，收集所有需要消除的行
+            for (let y = ROWS - 1; y >= 0; y--) {
+                if (board[y].every(cell => cell !== 0)) {
+                    linesToAnimate.push(y);
+                    linesCleared++;
+                }
+            }
+
+            if (linesToAnimate.length > 0) {
+                // 创建连锁反应特效
+                const centerX = canvas.width / 2;
+                const centerY = canvas.height / 2;
+                
+                // 创建电弧效果
+                for (let i = 0; i < linesCleared * 10; i++) {
+                    particles.push(new Particle(centerX, centerY, '#00ffff', 'chain'));
+                }
+                
+                // 创建脉冲波
+                for (let i = 0; i < linesCleared; i++) {
+                    const y = linesToAnimate[i] * BLOCK_SIZE + BLOCK_SIZE / 2;
+                    particles.push(new Particle(centerX, y, '#ffffff', 'shockwave'));
+                }
+                
+                // 增加屏幕震动
+                shakeIntensity = Math.min(linesCleared * 15, 40);
+                
+                // 创建全屏闪光
+                ctx.fillStyle = `rgba(0, 255, 255, ${linesCleared * 0.15})`;
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                // 同时处理所有行的消除动画
+                await Promise.all(linesToAnimate.map(y => animateLine(y)));
+
+                // 一次性移除所有行并添加新行
+                board = board.filter((row, index) => !linesToAnimate.includes(index));
+                while (board.length < ROWS) {
+                    board.unshift(Array(COLS).fill(0));
+                }
+
+                // 计算分数
+                score += [40, 100, 300, 1200][linesCleared - 1];
+                updateScore(score);
+
+                // 根据消除行数添加额外特效
+                if (linesCleared >= 2) {
+                    // 创建中心扩散的冲击波
+                    const centerX = canvas.width / 2;
+                    const centerY = canvas.height / 2;
+                    for (let i = 0; i < linesCleared; i++) {
+                        particles.push(new Particle(centerX, centerY, '#ffffff', 'shockwave'));
+                    }
+                }
+            }
+        }
+
+        function mergePiece() {
+            for (let y = 0; y < currentPiece.shape.length; y++) {
+                for (let x = 0; x < currentPiece.shape[y].length; x++) {
+                    if (currentPiece.shape[y][x]) {
+                        const boardY = currentPiece.y + y;
+                        if (boardY < 0) {
+                            gameOver();
+                            return;
+                        }
+                        board[boardY][currentPiece.x + x] = currentPiece.color;
+                        
+                        // 添加合并效果的粒子
+                        createParticles(
+                            (currentPiece.x + x) * BLOCK_SIZE + BLOCK_SIZE / 2,
+                            (currentPiece.y + y) * BLOCK_SIZE + BLOCK_SIZE / 2,
+                            currentPiece.color,
+                            10
+                        );
+                    }
+                }
+            }
+            checkLines();
+        }
+
+        function gameOver() {
+            if (animationId) {
+                cancelAnimationFrame(animationId);
+                animationId = null;
+            }
+            
+            // 创建游戏结束特效
+            for (let y = 0; y < ROWS; y++) {
+                for (let x = 0; x < COLS; x++) {
+                    if (board[y][x]) {
+                        createParticles(
+                            x * BLOCK_SIZE + BLOCK_SIZE / 2,
+                            y * BLOCK_SIZE + BLOCK_SIZE / 2,
+                            board[y][x],
+                            5
+                        );
+                    }
+                }
+            }
+
+            setTimeout(() => {
+                alert('游戏结束！得分：' + score);
+                board = Array(ROWS).fill().map(() => Array(COLS).fill(0));
+                score = 0;
+                updateScore(score);
+                particles = [];
+                startGame();
+            }, 1000);
+        }
+
+        function dropPiece() {
+            if (!currentPiece.move(0, 1)) {
+                const dropHeight = currentPiece.y - currentPiece.previousPositions[0]?.y || 1;
+                
+                // 根据下落高度调整震动强度
+                shakeIntensity = Math.min(dropHeight * 2, 10);
+                
+                // 创建落地特效
+                for (let y = 0; y < currentPiece.shape.length; y++) {
+                    for (let x = 0; x < currentPiece.shape[y].length; x++) {
+                        if (currentPiece.shape[y][x]) {
+                            const worldX = (currentPiece.x + x) * BLOCK_SIZE + BLOCK_SIZE / 2;
+                            const worldY = (currentPiece.y + y) * BLOCK_SIZE + BLOCK_SIZE;
+                            
+                            // 创建冲击波
+                            particles.push(new Particle(worldX, worldY, '#ffffff', 'shockwave'));
+                            
+                            // 创建火花
+                            for (let i = 0; i < 3; i++) {
+                                particles.push(new Particle(worldX, worldY, currentPiece.color, 'spark'));
+                            }
+                            
+                            // 创建尘埃效果
+                            for (let i = 0; i < 5; i++) {
+                                particles.push(new Particle(worldX, worldY, '#888888', 'dust'));
+                            }
+                        }
+                    }
+                }
+                
+                mergePiece();
+                currentPiece = new Piece();
+            }
+        }
+
+        function hardDrop() {
+            let dropDistance = 0;
+            const startY = currentPiece.y;
+            const shape = currentPiece.shape;
+            const positions = [];
+            
+            // 记录下落路径
+            while (!currentPiece.collision(0, dropDistance + 1)) {
+                dropDistance++;
+                positions.push(currentPiece.y + dropDistance);
+            }
+            
+            // 创建下落轨迹
+            const trailCount = Math.min(dropDistance, 10); // 限制轨迹数量
+            for (let i = 0; i < trailCount; i++) {
+                const y = startY + Math.floor((dropDistance * i) / trailCount);
+                for (let sy = 0; sy < shape.length; sy++) {
+                    for (let sx = 0; sx < shape[sy].length; sx++) {
+                        if (shape[sy][sx]) {
+                            const worldX = (currentPiece.x + sx) * BLOCK_SIZE + BLOCK_SIZE / 2;
+                            const worldY = (y + sy) * BLOCK_SIZE + BLOCK_SIZE / 2;
+                            
+                            // 创建更密集的轨迹粒子
+                            for (let j = 0; j < 3; j++) {
+                                particles.push(new Particle(worldX, worldY, currentPiece.color, 'trail'));
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // 移动到最终位置
+            currentPiece.y += dropDistance;
+            
+            // 强力震动
+            shakeIntensity = Math.min(dropDistance * 4, 40);
+            
+            // 创建落地特效
+            const finalY = currentPiece.y;
+            const finalX = currentPiece.x;
+            const centerX = (finalX + shape[0].length/2) * BLOCK_SIZE;
+            const centerY = (finalY + shape.length/2) * BLOCK_SIZE;
+            
+            // 创建多层冲击波
+            for (let i = 0; i < 5; i++) {
+                setTimeout(() => {
+                    particles.push(new Particle(centerX, centerY, '#ffffff', 'shockwave'));
+                }, i * 50);
+            }
+            
+            // 创建更密集的火花和爆炸效果
+            for (let y = 0; y < shape.length; y++) {
+                for (let x = 0; x < shape[y].length; x++) {
+                    if (shape[y][x]) {
+                        const worldX = (finalX + x) * BLOCK_SIZE + BLOCK_SIZE / 2;
+                        const worldY = (finalY + y) * BLOCK_SIZE + BLOCK_SIZE;
+                        
+                        // 增加火花数量和持续时间
+                        for (let i = 0; i < 8; i++) {
+                            setTimeout(() => {
+                                particles.push(new Particle(worldX, worldY, '#ffffff', 'spark'));
+                            }, i * 30);
+                        }
+                        
+                        // 增加爆炸粒子
+                        for (let i = 0; i < 5; i++) {
+                            particles.push(new Particle(worldX, worldY, currentPiece.color, 'explosion'));
+                        }
+                    }
+                }
+            }
+            
+            // 创建更大的地面裂痕效果
+            createGroundCrackEffect(centerX, centerY);
+            
+            // 添加屏幕扭曲效果
+            createDistortionEffect();
+            
+            mergePiece();
+            currentPiece = new Piece();
+        }
+
+        // 添加地面裂痕效果
+        function createGroundCrackEffect(x, y) {
+            const crackLength = BLOCK_SIZE * 3;
+            const segments = 5;
+            
+            for (let i = 0; i < segments; i++) {
+                const angle = (Math.random() - 0.5) * Math.PI / 2;
+                const length = crackLength * (1 - i / segments);
+                
+                ctx.beginPath();
+                ctx.moveTo(x, y);
+                ctx.lineTo(
+                    x + Math.cos(angle) * length,
+                    y + Math.abs(Math.sin(angle)) * length
+                );
+                ctx.strokeStyle = `rgba(255, 255, 255, ${0.8 - i / segments})`;
+                ctx.lineWidth = 2;
+                ctx.stroke();
+            }
+        }
+
+        document.addEventListener('keydown', event => {
+            if (isPaused && event.keyCode !== 80) return; // 如果暂停，只响应P键
+
+            switch (event.keyCode) {
+                case 37: // 左箭头
+                    currentPiece.move(-1, 0);
+                    break;
+                case 39: // 右箭头
+                    currentPiece.move(1, 0);
+                    break;
+                case 40: // 下箭头
+                    dropPiece();
+                    break;
+                case 38: // 上箭头
+                    currentPiece.rotate();
+                    break;
+                case 32: // 空格
+                    hardDrop();
+                    break;
+                case 80: // P键 - 暂停/继续
+                    togglePause();
+                    break;
+            }
+            draw();
+        });
+
+        function togglePause() {
+            isPaused = !isPaused;
+            if (isPaused) {
+                // 显示暂停文字
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.fillStyle = '#fff';
+                ctx.font = '30px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText('已暂停', canvas.width / 2, canvas.height / 2);
+                ctx.font = '16px Arial';
+                ctx.fillText('按 P 继续', canvas.width / 2, canvas.height / 2 + 40);
+            }
+        }
+
+        // 修改粒子系统
+        class Particle {
+            constructor(x, y, color, type = 'normal') {
+                // 转换为全局坐标
+                this.x = x + gameRect.left;
+                this.y = y + gameRect.top;
+                this.color = color;
+                this.type = type;
+                this.life = 1;
+                this.gravity = 0;
+                
+                switch(type) {
+                    case 'explosion':
+                        this.speed = Math.random() * 15 + 8;
+                        this.angle = Math.random() * Math.PI * 2;
+                        this.gravity = 0.4;
+                        this.size = Math.random() * 6 + 3;
+                        this.decay = Math.random() * 0.03 + 0.02; // 加快衰减速度
+                        this.rotationSpeed = (Math.random() - 0.5) * 0.2;
+                        break;
+                    case 'spark':
+                        this.speed = Math.random() * 15 + 8;
+                        this.angle = -Math.PI/2 + (Math.random() - 0.5);
+                        this.gravity = 0.2;
+                        this.length = Math.random() * 20 + 10;
+                        this.decay = Math.random() * 0.04 + 0.03; // 加快衰减速度
+                        break;
+                    case 'shockwave':
+                        this.radius = 0;
+                        this.maxRadius = Math.max(canvas.width, canvas.height) * 0.5; // 减小范围
+                        this.speed = Math.random() * 15 + 20; // 加快速度
+                        this.decay = 0.05; // 加快衰减
+                        break;
+                    case 'trail':
+                        this.speed = Math.random() * 2 + 1;
+                        this.angle = Math.PI/2;
+                        this.size = BLOCK_SIZE * 0.4; // 减小尺寸
+                        this.decay = 0.08; // 加快衰减
+                        this.opacity = 0.4; // 降低不透明度
+                        break;
+                    case 'chain':
+                        this.speed = Math.random() * 20 + 15;
+                        this.angle = Math.random() * Math.PI * 2;
+                        this.size = Math.random() * 4 + 2;
+                        this.decay = 0.015;
+                        this.pulseSpeed = Math.random() * 0.15 + 0.1;
+                        this.pulsePhase = Math.random() * Math.PI * 2;
+                        break;
+                    case 'energyBeam':
+                        this.speed = Math.random() * 15 + 10;
+                        this.angle = Math.random() * Math.PI * 2;
+                        this.length = Math.random() * 30 + 20;
+                        this.decay = 0.1;
+                        this.thickness = Math.random() * 2 + 1;
+                        break;
+                    case 'glow':
+                        this.size = Math.random() * BLOCK_SIZE + BLOCK_SIZE * 0.5;
+                        this.decay = 0.02;
+                        this.pulseSpeed = Math.random() * 0.1 + 0.05;
+                        break;
+                    case 'dust':
+                        this.speed = Math.random() * 2 + 1;
+                        this.angle = -Math.PI/2 + (Math.random() - 0.5);
+                        this.size = Math.random() * 3 + 1;
+                        this.decay = 0.05;
+                        this.gravity = 0.1;
+                        break;
+                }
+            }
+
+            update() {
+                if (this.type === 'shockwave') {
+                    this.radius += this.speed;
+                    this.life -= this.decay;
+                    return;
+                }
+
+                if (this.type === 'glow') {
+                    this.life -= this.decay;
+                    return;
+                }
+
+                if (this.type === 'energyBeam') {
+                    this.x += this.speed;
+                    if (this.x > canvas.width) this.x = -this.length;
+                    this.life -= this.decay;
+                    return;
+                }
+
+                this.speedY = Math.sin(this.angle) * this.speed;
+                this.speedX = Math.cos(this.angle) * this.speed;
+                this.speedY += this.gravity;
+                
+                this.x += this.speedX;
+                this.y += this.speedY;
+                this.life -= this.decay;
+                
+                if (this.type === 'explosion') {
+                    this.speed *= 0.95;
+                    this.angle += this.rotationSpeed;
+                }
+            }
+
+            draw() {
+                particleCtx.save();
+                particleCtx.globalAlpha = this.life;
+                particleCtx.globalCompositeOperation = 'screen';
+
+                switch(this.type) {
+                    case 'shockwave':
+                        const gradient = particleCtx.createRadialGradient(
+                            this.x, this.y, 0,
+                            this.x, this.y, this.radius
+                        );
+                        gradient.addColorStop(0, 'rgba(255, 255, 255, 0.5)');
+                        gradient.addColorStop(0.3, this.color + '88');
+                        gradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
+                        particleCtx.fillStyle = gradient;
+                        particleCtx.beginPath();
+                        particleCtx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                        particleCtx.fill();
+                        break;
+
+                    case 'explosion':
+                        particleCtx.fillStyle = this.color;
+                        particleCtx.shadowColor = this.color;
+                        particleCtx.shadowBlur = 15;
+                        particleCtx.beginPath();
+                        particleCtx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                        particleCtx.fill();
+                        
+                        // 添加光晕
+                        particleCtx.globalAlpha = this.life * 0.5;
+                        particleCtx.beginPath();
+                        particleCtx.arc(this.x, this.y, this.size * 2, 0, Math.PI * 2);
+                        particleCtx.fill();
+                        break;
+
+                    case 'spark':
+                        particleCtx.strokeStyle = this.color;
+                        particleCtx.lineWidth = 3;
+                        particleCtx.shadowColor = this.color;
+                        particleCtx.shadowBlur = 15;
+                        particleCtx.beginPath();
+                        particleCtx.moveTo(this.x, this.y);
+                        particleCtx.lineTo(
+                            this.x + Math.cos(this.angle) * this.length,
+                            this.y + Math.sin(this.angle) * this.length
+                        );
+                        particleCtx.stroke();
+                        break;
+
+                    case 'trail':
+                        const trailGradient = particleCtx.createLinearGradient(
+                            this.x, this.y - this.size/2,
+                            this.x, this.y + this.size/2
+                        );
+                        trailGradient.addColorStop(0, `${this.color}00`);
+                        trailGradient.addColorStop(0.5, `${this.color}${Math.floor(this.opacity * 255).toString(16).padStart(2, '0')}`);
+                        trailGradient.addColorStop(1, `${this.color}00`);
+                        particleCtx.fillStyle = trailGradient;
+                        particleCtx.shadowColor = this.color;
+                        particleCtx.shadowBlur = 10;
+                        particleCtx.fillRect(
+                            this.x - this.size/2,
+                            this.y - this.size/2,
+                            this.size,
+                            this.size
+                        );
+                        break;
+
+                    case 'chain':
+                        const pulseSize = this.size * (1 + Math.sin(Date.now() * this.pulseSpeed + this.pulsePhase) * 0.3);
+                        particleCtx.fillStyle = this.color;
+                        particleCtx.shadowColor = this.color;
+                        particleCtx.shadowBlur = pulseSize * 3;
+                        particleCtx.beginPath();
+                        particleCtx.arc(this.x, this.y, pulseSize, 0, Math.PI * 2);
+                        particleCtx.fill();
+                        break;
+
+                    case 'energyBeam':
+                        particleCtx.strokeStyle = this.color;
+                        particleCtx.lineWidth = this.thickness;
+                        particleCtx.shadowColor = this.color;
+                        particleCtx.shadowBlur = 10;
+                        particleCtx.beginPath();
+                        particleCtx.moveTo(this.x, this.y);
+                        particleCtx.lineTo(
+                            this.x + Math.cos(this.angle) * this.length,
+                            this.y + Math.sin(this.angle) * this.length
+                        );
+                        particleCtx.stroke();
+                        break;
+
+                    case 'glow':
+                        const glowGradient = particleCtx.createRadialGradient(
+                            this.x, this.y, 0,
+                            this.x, this.y, this.size
+                        );
+                        glowGradient.addColorStop(0, `${this.color}44`);
+                        glowGradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
+                        particleCtx.fillStyle = glowGradient;
+                        particleCtx.beginPath();
+                        particleCtx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                        particleCtx.fill();
+                        break;
+
+                    case 'dust':
+                        particleCtx.fillStyle = this.color;
+                        particleCtx.beginPath();
+                        particleCtx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                        particleCtx.fill();
+                        break;
+                }
+
+                particleCtx.restore();
+            }
+        }
+
+        let particles = [];
+
+        function createParticles(x, y, color, count) {
+            for (let i = 0; i < count; i++) {
+                particles.push(new Particle(x, y, color));
+            }
+        }
+
+        function updateParticles() {
+            particleCtx.clearRect(0, 0, particleCanvas.width, particleCanvas.height);
+            for (let i = particles.length - 1; i >= 0; i--) {
+                particles[i].update();
+                particles[i].draw();
+                if (particles[i].life <= 0) {
+                    particles.splice(i, 1);
+                }
+            }
+        }
+
+        // 修改游戏循环以确保方块持续下落
+        function update(currentTime) {
+            if (!lastDropTime) lastDropTime = currentTime;
+            
+            if (!isPaused) {
+                if (currentTime - lastDropTime > dropInterval) {
+                    dropPiece();
+                    lastDropTime = currentTime;
+                }
+                
+                // 应用震动效果
+                ctx.save();
+                applyShake();
+                ctx.translate(shakeOffsetX, shakeOffsetY);
+                
+                draw();
+                
+                // 在某些情况下添加背景特效
+                if (shakeIntensity > 0) {
+                    createCyberGrid();
+                    createDistortionEffect();
+                }
+                
+                ctx.restore();
+            }
+            
+            updateParticles();
+            animationId = requestAnimationFrame(update);
+        }
+
+        function startGame() {
+            currentPiece = new Piece();
+            lastDropTime = 0;
+            isPaused = false;
+            animationId = requestAnimationFrame(update);
+        }
+
+        // 升级网格效果
+        function drawGrid() {
+            // 创建动态背景
+            const time = Date.now() * 0.001;
+            
+            // 主背景渐变
+            const bgGradient = ctx.createRadialGradient(
+                canvas.width / 2, canvas.height / 2, 0,
+                canvas.width / 2, canvas.height / 2, canvas.height
+            );
+            bgGradient.addColorStop(0, '#1a1a2e');
+            bgGradient.addColorStop(0.5, '#1a1a3e');
+            bgGradient.addColorStop(1, '#16161d');
+            ctx.fillStyle = bgGradient;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // 添加动态光晕
+            const glowX = canvas.width/2 + Math.cos(time * 0.5) * 50;
+            const glowY = canvas.height/2 + Math.sin(time * 0.3) * 50;
+            const glow = ctx.createRadialGradient(
+                glowX, glowY, 0,
+                glowX, glowY, canvas.height * 0.7
+            );
+            glow.addColorStop(0, 'rgba(0, 255, 255, 0.1)');
+            glow.addColorStop(1, 'rgba(0, 0, 0, 0)');
+            ctx.fillStyle = glow;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // 绘制动态网格
+            ctx.strokeStyle = 'rgba(0, 255, 255, 0.1)';
+            ctx.lineWidth = 0.5;
+            ctx.shadowColor = '#0ff';
+            ctx.shadowBlur = 5;
+
+            // 水平网格线
+            for (let y = 0; y <= ROWS; y++) {
+                const offset = Math.sin(y * 0.2 + time) * 3;
+                const alpha = 0.1 + Math.sin(y * 0.1 + time) * 0.05;
+                ctx.strokeStyle = `rgba(0, 255, 255, ${alpha})`;
+                
+                ctx.beginPath();
+                ctx.moveTo(0, y * BLOCK_SIZE + offset);
+                ctx.lineTo(canvas.width, y * BLOCK_SIZE - offset);
+                ctx.stroke();
+            }
+
+            // 垂直网格线
+            for (let x = 0; x <= COLS; x++) {
+                const offset = Math.cos(x * 0.2 + time) * 3;
+                const alpha = 0.1 + Math.cos(x * 0.1 + time) * 0.05;
+                ctx.strokeStyle = `rgba(0, 255, 255, ${alpha})`;
+                
+                ctx.beginPath();
+                ctx.moveTo(x * BLOCK_SIZE + offset, 0);
+                ctx.lineTo(x * BLOCK_SIZE - offset, canvas.height);
+                ctx.stroke();
+            }
+
+            // 添加警告效果
+            const dangerLevel = Math.max(0, Math.min(1, getMaxHeight() / (ROWS * 0.7)));
+            if (dangerLevel > 0) {
+                // 创建脉冲效果
+                const pulseIntensity = 0.2 + Math.sin(time * 5) * 0.1;
+                const warningGradient = ctx.createRadialGradient(
+                    canvas.width / 2, canvas.height / 2, 0,
+                    canvas.width / 2, canvas.height / 2, canvas.width
+                );
+                warningGradient.addColorStop(0, `rgba(255, 0, 0, 0)`);
+                warningGradient.addColorStop(0.7, `rgba(255, 0, 0, ${dangerLevel * pulseIntensity})`);
+                warningGradient.addColorStop(1, `rgba(255, 0, 0, ${dangerLevel * pulseIntensity * 2})`);
+                ctx.fillStyle = warningGradient;
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                // 添加边缘警告光晕
+                const edgeGlow = ctx.createLinearGradient(0, 0, canvas.width, 0);
+                edgeGlow.addColorStop(0, `rgba(255, 0, 0, ${dangerLevel * pulseIntensity})`);
+                edgeGlow.addColorStop(0.1, 'rgba(255, 0, 0, 0)');
+                edgeGlow.addColorStop(0.9, 'rgba(255, 0, 0, 0)');
+                edgeGlow.addColorStop(1, `rgba(255, 0, 0, ${dangerLevel * pulseIntensity})`);
+                ctx.fillStyle = edgeGlow;
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+            }
+        }
+
+        // 获取最高方块高度
+        function getMaxHeight() {
+            for (let y = 0; y < ROWS; y++) {
+                if (board[y].some(cell => cell !== 0)) {
+                    return ROWS - y;
+                }
+            }
+            return 0;
+        }
+
+        // 修改更新分数的方式
+        function updateScore(newScore) {
+            const scoreElement = document.getElementById('score');
+            const oldScore = parseInt(scoreElement.textContent);
+            if (newScore > oldScore) {
+                // 添加分数变化动画
+                scoreElement.classList.remove('score-change');
+                void scoreElement.offsetWidth;
+                scoreElement.classList.add('score-change');
+                
+                // 创建分数特效
+                const rect = scoreElement.getBoundingClientRect();
+                const centerX = rect.left + rect.width / 2;
+                const centerY = rect.top + rect.height / 2;
+                
+                // 添加分数光晕效果
+                for (let i = 0; i < 5; i++) {
+                    particles.push(new Particle(centerX, centerY, '#00ffff', 'glow'));
+                }
+                
+                // 动态数字增长效果
+                const scoreDiff = newScore - oldScore;
+                const duration = 500; // 动画持续时间（毫秒）
+                const startTime = Date.now();
+                
+                const animateScore = () => {
+                    const now = Date.now();
+                    const progress = Math.min(1, (now - startTime) / duration);
+                    const currentScore = Math.floor(oldScore + scoreDiff * progress);
+                    
+                    scoreElement.textContent = currentScore;
+                    
+                    if (progress < 1) {
+                        requestAnimationFrame(animateScore);
+                    }
+                };
+                
+                animateScore();
+                
+                // 添加上升数字效果
+                const scoreText = document.createElement('div');
+                scoreText.textContent = '+' + scoreDiff;
+                scoreText.className = 'floating-score';
+                document.body.appendChild(scoreText);
+                
+                // 设置初始位置
+                scoreText.style.left = centerX + 'px';
+                scoreText.style.top = centerY + 'px';
+                
+                setTimeout(() => {
+                    document.body.removeChild(scoreText);
+                }, 1000);
+            }
+        }
+
+        // 添加CSS动画
+        const style = document.createElement('style');
+        style.textContent = `
+            @keyframes scoreChange {
+                0% { transform: scale(1); }
+                50% { transform: scale(1.2); filter: brightness(1.5); }
+                100% { transform: scale(1); }
+            }
+            
+            .score-change {
+                animation: scoreChange 0.3s ease-out;
+            }
+            
+            .floating-score {
+                position: absolute;
+                color: #00ffff;
+                font-size: 24px;
+                font-weight: bold;
+                text-shadow: 0 0 10px #00ffff;
+                pointer-events: none;
+                animation: floatUp 1s ease-out forwards;
+            }
+            
+            @keyframes floatUp {
+                0% {
+                    transform: translateY(0) scale(1);
+                    opacity: 1;
+                }
+                50% {
+                    transform: translateY(-25px) scale(1.2);
+                    opacity: 0.8;
+                }
+                100% {
+                    transform: translateY(-50px) scale(1);
+                    opacity: 0;
+                }
+            }
+            
+            .score {
+                position: relative;
+            }
+            
+            .score::after {
+                content: '';
+                position: absolute;
+                top: -10px;
+                left: -10px;
+                right: -10px;
+                bottom: -10px;
+                border-radius: 10px;
+                background: radial-gradient(circle, rgba(0,255,255,0.1) 0%, rgba(0,255,255,0) 70%);
+                animation: glowPulse 2s ease-in-out infinite;
+            }
+            
+            @keyframes glowPulse {
+                0% { transform: scale(1); opacity: 0.5; }
+                50% { transform: scale(1.1); opacity: 0.8; }
+                100% { transform: scale(1); opacity: 0.5; }
+            }
+        `;
+        document.head.appendChild(style);
+
+        startGame();
+    </script>
+</body>
 </html>
